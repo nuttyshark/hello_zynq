@@ -36,7 +36,7 @@ module axi_master_v4_write_aligned
            input i_b_valid,
            output reg or_b_ready
        );
-
+       
 // --- const output
 assign o_aw_size = D_POWER;
 
@@ -55,11 +55,8 @@ reg[31:0] d_ready_cnter, d_eat_cnter;
 
 // --- inner signals
 reg[31: 0] r_addr, r_len;
-reg r_pre_load;
-wire w_jump_running;
-assign w_jump_running = r_len > 0?i_w_ready:1'b0;
 
-assign o_ready = w_jump_running | (r_eat[0] ^ r_eat[1]);
+assign o_ready = (r_len > 0 ? i_w_ready : 1'b0) | (r_eat[0] ^ r_eat[1]);
 assign o_w_last = or_aw_len == 0?or_w_valid:1'b0;
 
 wire [ 7: 0] next_burst_len, next_burst;
@@ -87,10 +84,8 @@ always @ (posedge sys_clock or negedge async_reset) begin
             r_eat[0] <= r_eat[1];
             or_w_data <= i_data;
             d_eat_cnter <= d_eat_cnter + 1;
-        end else if (w_jump_running & ~i_valid) begin
-            r_eat[1] <= ~r_eat[1];
         end
-        if(i_w_ready & ~o_ready) begin
+        if(i_w_ready & or_w_valid) begin
             d_ready_cnter <= d_ready_cnter + 1;
         end
         case(s_state)
@@ -110,7 +105,7 @@ always @ (posedge sys_clock or negedge async_reset) begin
                 or_aw_addr <= r_addr;
                 or_aw_len <= next_burst;
                 if(i_aw_ready) begin
-                    r_addr[31:D_POWER] <= r_addr[31:D_POWER] + or_aw_len + 1;
+                    r_addr[31:D_POWER] <= r_addr[31:D_POWER] + next_burst + 1;
                     s_state = S_DATA;
                 end
             end
@@ -118,6 +113,11 @@ always @ (posedge sys_clock or negedge async_reset) begin
                 or_aw_valid <= 1'b0;
                 if(i_w_ready & or_w_valid) begin
                     or_w_valid <= i_valid & o_ready;
+                    if((or_aw_len > 1) || (or_aw_len == 1 & ~(i_valid & o_ready))) begin
+                        r_eat[1] <= r_eat[1] ^ 1;
+                    end
+                    if(!(or_aw_len < 2 & (i_valid & o_ready))) begin
+                    end
                     if(or_aw_len > 0)begin
                         or_aw_len <= or_aw_len - 1;
                     end else begin
