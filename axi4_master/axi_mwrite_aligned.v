@@ -36,65 +36,50 @@ module axi_master_v4_write_aligned
            input i_b_valid,
            output reg or_b_ready
        );
-       
+
 // --- const output
 assign o_aw_size = D_POWER;
+assign o_w_data = i_data;
+assign o_ready = i_w_ready;
+assign o_w_strb = {B_WIDTH{1'b1}};
 
 // --- state machine
 localparam S_IDLE = 2'b00;
 localparam S_ADDR = 2'b01;
 localparam S_DATA = 2'b11;
 localparam S_RESP = 2'b10;
-reg [1: 0] s_state;
+(*mark_debug="true"*)reg [1: 0] s_state;
 
-// --- pair signal
-reg[1:0] r_eat;
-
-// --- debug signal
-reg[31:0] d_ready_cnter, d_eat_cnter;
+assign o_w_valid = i_valid & (s_state == S_DATA);
 
 // --- inner signals
-reg[31: 0] r_addr, r_len;
+(*mark_debug="true"*)reg[31: 0] r_addr, r_len;
 
-assign o_ready = (r_len > 0 ? i_w_ready : 1'b0) | (r_eat[0] ^ r_eat[1]);
-assign o_w_last = or_aw_len == 0?or_w_valid:1'b0;
+assign o_w_last = or_aw_len == 0?o_w_valid:1'b0;
 
-wire [ 7: 0] next_burst_len, next_burst;
-wire [11: 0] next_burst_4k;
+(*mark_debug="true"*)wire [ 7: 0] next_burst_len, next_burst;
+(*mark_debug="true"*)wire [11-D_POWER: 0] next_burst_4k;
 assign next_burst_len = r_len[31:D_POWER] > 255 ? 255 : r_len[D_POWER+7:D_POWER];
-assign next_burst_4k = 12'hFFF - r_addr[11:0];
+assign next_burst_4k = {(12-D_POWER){1'b1}} - r_addr[11:D_POWER];
 assign next_burst = next_burst_4k > next_burst_len ? next_burst_len : next_burst_4k[7:0];
 
 always @ (posedge sys_clock or negedge async_reset) begin
     if (!async_reset) begin
-        r_eat <= 2'b0;
         s_state <= S_IDLE;
         or_aw_valid <= 0;
         or_aw_addr <= 0;
         or_aw_len <= 0;
         or_b_ready <= 1'b0;
-        or_w_strb <= {B_WIDTH{1'b1}};
         or_busy <= 1'b1;
-        or_w_valid <= 1'b0;
+        r_len <= 0;
         
-        d_eat_cnter <= 0;
-        d_ready_cnter <= 0;
     end else begin
-        if(o_ready & i_valid) begin
-            r_eat[0] <= r_eat[1];
-            or_w_data <= i_data;
-            d_eat_cnter <= d_eat_cnter + 1;
-        end
-        if(i_w_ready & or_w_valid) begin
-            d_ready_cnter <= d_ready_cnter + 1;
-        end
         case(s_state)
             S_IDLE: begin
                 if(i_req) begin
                     or_busy <= 1'b1;
-                    r_addr <= i_addr;
-                    r_len <= i_len;
-                    r_eat[1] <= ~r_eat[1];
+                    r_addr[31:D_POWER] <= i_addr[31:D_POWER];
+                    r_len[31:D_POWER] <= i_len[31:D_POWER]-1;
                     s_state <= S_ADDR;
                 end else begin
                     or_busy <= 1'b0;
@@ -111,30 +96,19 @@ always @ (posedge sys_clock or negedge async_reset) begin
             end
             S_DATA: begin
                 or_aw_valid <= 1'b0;
-                if(i_w_ready & or_w_valid) begin
-                    or_w_valid <= i_valid & o_ready;
-                    if((or_aw_len > 1) || (or_aw_len == 1 & ~(i_valid & o_ready))) begin
-                        r_eat[1] <= r_eat[1] ^ 1;
-                    end
-                    if(!(or_aw_len < 2 & (i_valid & o_ready))) begin
-                    end
+                if(i_w_ready)begin
                     if(or_aw_len > 0)begin
                         or_aw_len <= or_aw_len - 1;
                     end else begin
                         or_b_ready <= 1'b1;
                         s_state <= S_RESP;
                     end
-                    if(r_len > 0) begin
+                    if(r_len[31:D_POWER] > 0) begin
                         r_len[31:D_POWER] <= r_len[31:D_POWER] - 1;
                     end
-                end else if (~o_ready) begin
-                    or_w_valid <= 1'b1;
-                end else begin
-                    or_w_valid <= 1'b0;
                 end
             end
             S_RESP: begin
-                or_w_valid <= 1'b0;
                 if (i_b_valid) begin
                     or_b_ready <= 1'b0;
                     s_state <= r_len > 0?S_ADDR : S_IDLE;
@@ -143,5 +117,6 @@ always @ (posedge sys_clock or negedge async_reset) begin
         endcase
     end
 end
+
 
 endmodule
